@@ -1,0 +1,6 @@
+/.bundle/
+/Gemfile.lock
+/tmp/*
+!/tmp/test_*_spec.rb
+!/tmp/test_support.rb
+/*.gem
