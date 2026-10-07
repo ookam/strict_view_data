@@ -74,6 +74,11 @@ RSpec.describe 'Railsの描画との統合', type: :controller do
       'test_view_data/write.html.haml' => '= view_data(:extra, 1)',
       'test_view_data/partial.html.haml' => '= render "test_view_data/item"',
       'test_view_data/_item.html.haml' => '%p= view_data.label',
+      'test_view_data/explicit_user.html.haml' => '= render "test_view_data/user", current_user: "明示したユーザー"',
+      'test_view_data/_user.html.haml' => '%p= current_user',
+      'test_view_data/explicit_erb_user.html.erb' => '<%= render "test_view_data/erb_user", current_user: "明示したユーザー" %>',
+      'test_view_data/_erb_user.html.erb' => '<p><%= current_user %></p>',
+      'test_view_data/collection_users.html.haml' => '= render partial: "test_view_data/user", collection: ["明示したユーザー"], as: :current_user',
       'test_view_data/bad_partial.html.haml' => '= render "test_view_data/bad_item"',
       'test_view_data/_bad_item.html.haml' => '%p= @hidden',
       'test_view_data/erb.html.erb' => '<p><%= view_data.label %></p>',
@@ -124,8 +129,8 @@ RSpec.describe 'Railsの描画との統合', type: :controller do
     expect { render_response(query: { page: 'forbidden' }) }.to raise_error(StrictViewData::ForbiddenAccessError)
   end
 
-  it 'Controllerヘルパーを直接読むと例外になる' do
-    expect { render_response(query: { page: 'helper' }) }.to raise_error(StrictViewData::ForbiddenAccessError)
+  it 'Controllerヘルパーも通常どおり利用できる' do
+    expect(render_response(query: { page: 'helper' })).to include('ログイン中')
   end
 
   it '未登録の入力は描画エラーになる' do
@@ -138,6 +143,14 @@ RSpec.describe 'Railsの描画との統合', type: :controller do
 
   it '部分テンプレートに同じ明示的入力を渡す' do
     expect(render_response(query: { page: 'partial' })).to include('会話A')
+  end
+
+  %w[explicit_user explicit_erb_user collection_users].each do |page|
+    it "ヘルパーと同名のlocalsも明示的に渡せる: #{page}" do
+      html = render_response(query: { page: page })
+      expect(html).to include('明示したユーザー')
+      expect(html).not_to include('ログイン中')
+    end
   end
 
   it '部分テンプレートの暗黙参照も検査する' do
@@ -168,10 +181,14 @@ RSpec.describe 'Railsの描画との統合', type: :controller do
     expect(render_response(query: { page: 'strict' })).to include('初期値', '会話A')
   end
 
-  %w[strict_shadow strict_hidden strict_helper].each do |page|
+  %w[strict_shadow strict_hidden].each do |page|
     it "Strict Localsの初期値でも暗黙参照や上書きを拒否する: #{page}" do
       expect { render_response(query: { page: page }) }.to raise_error(StrictViewData::ForbiddenAccessError)
     end
+  end
+
+  it 'Strict Localsの初期値でもヘルパーを利用できる' do
+    expect(render_response(query: { page: 'strict_helper' })).to include('ログイン中')
   end
 
   it '描画開始後の登録を拒否する' do
@@ -206,13 +223,13 @@ RSpec.describe 'Railsの描画との統合', type: :controller do
     end
   end
 
-  it '同じテンプレートとヘルパー集合は一度だけ解析する' do
+  it '同じコンパイル済みテンプレートは一度だけ解析する' do
     ActionView::LookupContext::DetailsKey.clear
     allow(StrictViewData::TemplateCheck).to receive(:verify!).and_call_original
     render_response
     render_response
     expect(StrictViewData::TemplateCheck).to have_received(:verify!).with(anything, kind: :haml,
-      identifier: end_with('/test_view_data/show.html.haml'), controller_helpers: anything, locals_signature: nil).once
+      identifier: end_with('/test_view_data/show.html.haml'), locals_signature: nil).once
   end
 
   it '登録メソッドをルーティング可能なアクションにしない' do

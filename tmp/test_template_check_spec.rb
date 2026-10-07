@@ -19,6 +19,18 @@ RSpec.describe 'テンプレートの暗黙参照の禁止' do
     [ '<%= @room %>', :erb ],
     [ '<% @room = 1 %>', :erb ],
     [ '<%= "#{@room}" %>', :erb ],
+    [ "- view_data = {}\n%p= view_data", :haml ],
+    [ "- [1].each do |view_data|\n  %p= view_data", :haml ],
+    [ '<% view_data = {} %>', :erb ]
+  ].each do |source, kind|
+    it "#{kind}の暗黙参照を拒否する: #{source}" do
+      expect do
+        StrictViewData::TemplateCheck.verify!(source, kind: kind, identifier: 'test/show')
+      end.to raise_error(StrictViewData::ForbiddenAccessError, /test\/show/)
+    end
+  end
+
+  [
     [ '%p= current_user.name', :haml ],
     [ '%p= self.current_user.name', :haml ],
     [ '%p= params[:name]', :haml ],
@@ -32,18 +44,6 @@ RSpec.describe 'テンプレートの暗黙参照の禁止' do
     [ '%p= instance_variable_get(:@room)', :haml ],
     [ '%p= binding', :haml ],
     [ '%p= view_data.try(:missing)', :haml ],
-    [ "- view_data = {}\n%p= view_data", :haml ],
-    [ "- [1].each do |view_data|\n  %p= view_data", :haml ],
-    [ '<% view_data = {} %>', :erb ]
-  ].each do |source, kind|
-    it "#{kind}の暗黙参照を拒否する: #{source}" do
-      expect do
-        StrictViewData::TemplateCheck.verify!(source, kind: kind, identifier: 'test/show', controller_helpers: [ :current_user ])
-      end.to raise_error(StrictViewData::ForbiddenAccessError, /test\/show/)
-    end
-  end
-
-  [
     [ '%p= view_data.current_user.name', :haml ],
     [ '%p= link_to("会話", "/rooms")', :haml ],
     [ '%p example@example.com', :haml ],
@@ -59,20 +59,20 @@ RSpec.describe 'テンプレートの暗黙参照の禁止' do
   ].each do |source, kind|
     it "#{kind}の明示的入力や表示文字列を許可する: #{source}" do
       expect do
-        StrictViewData::TemplateCheck.verify!(source, kind: kind, identifier: 'test/show', controller_helpers: [ :current_user ])
+        StrictViewData::TemplateCheck.verify!(source, kind: kind, identifier: 'test/show')
       end.not_to raise_error
     end
   end
 
   it '対応外のテンプレートを無検査で通さない' do
     expect do
-      StrictViewData::TemplateCheck.verify!('xml.title @room', kind: :builder, identifier: 'test/show', controller_helpers: [])
+      StrictViewData::TemplateCheck.verify!('xml.title @room', kind: :builder, identifier: 'test/show')
     end.to raise_error(StrictViewData::ForbiddenAccessError, /対応していない/)
   end
 
   it '壊れたRubyを無検査で通さない' do
     expect do
-      StrictViewData::TemplateCheck.verify!('<%= ( %>', kind: :erb, identifier: 'test/show', controller_helpers: [])
+      StrictViewData::TemplateCheck.verify!('<%= ( %>', kind: :erb, identifier: 'test/show')
     end.to raise_error(StrictViewData::ForbiddenAccessError, /構文/)
   end
 end

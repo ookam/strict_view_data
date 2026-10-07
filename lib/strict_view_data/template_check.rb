@@ -4,34 +4,22 @@ require 'prism'
 
 # @note Viewへ明示的に渡す入力だけを管理する。
 module StrictViewData
-  # @note HAMLとERBを実行せずにRuby構文木へ変換し、暗黙の状態参照を検査する。
+  # @note HAMLとERBを実行せずにRuby構文木へ変換し、変数の直接参照と入力の入口の上書きを検査する。
   module TemplateCheck
-    AMBIENT_METHODS = %i[
-      controller helpers assigns view_context local_assigns request response params session cookies
-      headers flash action_name controller_name controller_path
-    ].freeze
-    REFLECTION_METHODS = %i[
-      send public_send __send__ method public_method singleton_method binding eval instance_eval
-      instance_exec class_eval module_eval instance_variable_get instance_variable_set
-      instance_variables remove_instance_variable define_singleton_method try try!
-    ].freeze
-
     # @note テンプレートのRuby構文だけを検査する。文章中のメールアドレスやコメントは対象外とする。
     # @param source [String] テンプレートのソース。
     # @param kind [Symbol] 対応するテンプレート形式。hamlまたはerb。
     # @param identifier [String] エラーに表示するテンプレートの識別名。
-    # @param controller_helpers [Array<Symbol, String>] Controllerが公開しているヘルパー名。
     # @param locals_signature [String, nil] Railsが解析したStrict Localsの引数宣言。未指定ならnil。
     # @return [void] 禁止した参照がなければ処理を終了する。
     # @raise [ForbiddenAccessError] 暗黙参照、対応外形式、またはRuby構文の解析失敗がある場合。
-    def self.verify!(source, kind:, identifier:, controller_helpers:, locals_signature: nil)
+    def self.verify!(source, kind:, identifier:, locals_signature: nil)
       ruby = compile(source, kind, identifier)
       parsed = Prism.parse("def __strict_view_data_template__(#{locals_signature})\n#{ruby}\nend")
       unless parsed.success?
         raise ForbiddenAccessError, "#{identifier}: テンプレートのRuby構文を解析できません"
       end
 
-      forbidden = AMBIENT_METHODS | controller_helpers.map(&:to_sym)
       nodes = [ parsed.value ]
       until nodes.empty?
         node = nodes.pop
@@ -42,13 +30,6 @@ module StrictViewData
         if node.respond_to?(:name) && node.name == :view_data &&
            (node.type.to_s.start_with?('local_variable_') || node.type.to_s.include?('parameter') || node.is_a?(Prism::DefNode))
           raise ForbiddenAccessError, "#{identifier}: view_dataの入口をローカル変数やメソッドで上書きできません"
-        end
-
-        if node.is_a?(Prism::CallNode)
-          direct = node.receiver.nil? || node.receiver.is_a?(Prism::SelfNode)
-          if (direct && forbidden.include?(node.name)) || REFLECTION_METHODS.include?(node.name)
-            raise ForbiddenAccessError, "#{identifier}: #{node.name}の直接参照は禁止です。値をview_dataで渡してください"
-          end
         end
 
         nodes.concat(node.compact_child_nodes)

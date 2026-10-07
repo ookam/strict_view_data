@@ -32,7 +32,7 @@ module StrictViewData
 
   # @note 適用対象の描画時に、レイアウトと部分テンプレートも含めて暗黙参照を検査する。
   module TemplateGuard
-    # @note 同じソースと公開ヘルパーの組み合わせは検査結果を再利用し、描画前に入力を固定する。
+    # @note コンパイルした本文だけを検査し、描画前に入力を固定する。コンパイル済みの描画ではファイルを読み直さない。
     # @param view [ActionView::Base] 描画するViewのコンテキスト。
     # @param locals [Hash] Railsが提供するローカル変数。
     # @param buffer [ActionView::OutputBuffer, nil] Railsの出力先。nilならRailsに生成を委ねる。
@@ -47,13 +47,17 @@ module StrictViewData
         if locals.key?(:view_data) || locals.key?('view_data')
           raise ForbiddenAccessError, "#{identifier}: localsでview_dataを上書きできません"
         end
-        helpers = controller.class._helper_methods.map(&:to_sym).sort.freeze
         kind = strict_view_data_template_kind
-        locals_signature = strict_locals?
-        signature = [ source, kind, helpers, locals_signature ]
-        unless @_strict_view_data_signature == signature
-          TemplateCheck.verify!(source, kind: kind, identifier: identifier, controller_helpers: helpers, locals_signature: locals_signature)
-          @_strict_view_data_signature = [ source.dup.freeze, kind, helpers, locals_signature&.dup&.freeze ].freeze
+        raise ForbiddenAccessError, "#{identifier}: 対応していないテンプレート形式です" unless kind
+
+        compile!(view)
+        unless @_strict_view_data_snapshot
+          raise ForbiddenAccessError, "#{identifier}: コンパイル時のテンプレートを検査できません"
+        end
+        unless @_strict_view_data_checked
+          compiled_source, locals_signature = @_strict_view_data_snapshot
+          TemplateCheck.verify!(compiled_source, kind: kind, identifier: identifier, locals_signature: locals_signature)
+          @_strict_view_data_checked = true
         end
         controller.send(:strict_view_data_values)
       end
@@ -62,6 +66,24 @@ module StrictViewData
     end
 
     private
+
+    # @note Railsのコンパイルロック内で本文を固定し、成功した本文とStrict Localsだけを保存する。
+    #   未適用Controllerが先に描画した場合も保存する。元のソースは必ず復元し、失敗後の再試行を妨げない。
+    # @param mod [Module] Railsが描画メソッドを定義する先。
+    # @return [Array<Symbol>, nil] Railsが返すStrict Localsのキー。通常のテンプレートなどではnil。
+    def compile(mod)
+      return super unless strict_view_data_template_kind
+
+      original_source = @source
+      begin
+        @source = source.dup
+        result = super
+        @_strict_view_data_snapshot = [ source.dup.freeze, strict_locals?&.dup&.freeze ].freeze
+        return result
+      ensure
+        @source = original_source
+      end
+    end
 
     # @note 検査したコンパイラと一致する標準のERBまたはHAMLハンドラーを識別する。
     # @return [Symbol, nil] 対応形式の名前。対応外ならnilとして検査エラーにする。
